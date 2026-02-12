@@ -120,7 +120,7 @@ class PuppeteerActions {
           href: el.href || null,
           selector: el.id ? `#${el.id}` :
                     el.name ? `[name="${el.name}"]` :
-                    el.className ? `${el.tagName.toLowerCase()}.${el.className.split(' ')[0]}` : null
+                    (typeof el.className === 'string' && el.className) ? `${el.tagName.toLowerCase()}.${el.className.split(' ')[0]}` : null
         }));
     }, params?.limit);
 
@@ -226,8 +226,7 @@ class PuppeteerActions {
     if (!params.script || typeof params.script !== 'string') {
       return { success: false, error: 'Missing or invalid script parameter' };
     }
-    // Wrap string as function body so both expressions and statements work
-    const result = await this.page.evaluate(new Function('return (' + params.script + ')'));
+    const result = await this.page.evaluate(params.script);
     return { success: true, result };
   }
 

@@ -24,6 +24,8 @@ let reconnectTimer = null;
 let reconnectDelay = 5000;
 const RECONNECT_MAX_DELAY = 60000;
 let config = null;
+let connectingPromise = null;
+let intentionalDisconnect = false;
 
 const actions = new PuppeteerActions();
 
@@ -42,7 +44,7 @@ async function loadConfig() {
   try {
     console.log(`Fetching configuration from ${configUrl}...`);
 
-    const response = await fetch(configUrl);
+    const response = await fetch(configUrl, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     config = await response.json();
 
@@ -106,8 +108,11 @@ async function discoverAddonSession() {
     headers: { 'Content-Type': 'application/json', 'x-api-key': graphqlKey },
     body: JSON.stringify({
       query: `query { listSessions(filter: { isActive: { eq: true }, id: { beginsWith: "addon-" } }) { items { id } } }`
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
+
+  if (!response.ok) throw new Error(`GraphQL API returned HTTP ${response.status}`);
 
   const gqlData = await response.json();
   const sessions = gqlData.data?.listSessions?.items || [];
@@ -134,37 +139,49 @@ function buildBrowserWSEndpoint() {
 }
 
 /**
- * Connect Puppeteer directly to done24bot via authenticated WebSocket
+ * Connect Puppeteer directly to done24bot via authenticated WebSocket.
+ * Uses connectingPromise to prevent concurrent connection attempts.
  */
 async function connectBrowser() {
-  const browserWSEndpoint = buildBrowserWSEndpoint();
-  const maskedUrl = browserWSEndpoint.replace(/=(addon-[^&]+|[^&]{6,})/, '=***');
-  console.log(`Connecting Puppeteer to: ${maskedUrl}`);
+  if (connectingPromise) return connectingPromise;
 
-  browser = await puppeteer.connect({
-    browserWSEndpoint,
-    protocolTimeout: 30000,
-  });
+  connectingPromise = (async () => {
+    const browserWSEndpoint = buildBrowserWSEndpoint();
+    const maskedUrl = browserWSEndpoint.replace(/=(addon-[^&]+|[^&]{6,})/, '=***');
+    console.log(`Connecting Puppeteer to: ${maskedUrl}`);
 
-  // Single disconnected handler - only on the server side
-  // (puppeteer-actions.js no longer registers its own)
-  browser.on('disconnected', () => {
-    console.log('Browser disconnected');
-    browser = null;
-    actions.browser = null;
-    actions.page = null;
-    scheduleReconnect();
-  });
+    intentionalDisconnect = false;
 
-  await actions.initialize(browser);
+    browser = await puppeteer.connect({
+      browserWSEndpoint,
+      protocolTimeout: 30000,
+    });
 
-  const version = await browser.version();
-  console.log(`Connected - browser version: ${version}`);
+    browser.on('disconnected', () => {
+      console.log('Browser disconnected');
+      browser = null;
+      actions.browser = null;
+      actions.page = null;
+      if (!intentionalDisconnect) {
+        scheduleReconnect();
+      }
+    });
 
-  // Reset backoff on successful connection
-  reconnectDelay = 5000;
+    await actions.initialize(browser);
 
-  return browser;
+    const version = await browser.version();
+    console.log(`Connected - browser version: ${version}`);
+
+    reconnectDelay = 5000;
+
+    return browser;
+  })();
+
+  try {
+    return await connectingPromise;
+  } finally {
+    connectingPromise = null;
+  }
 }
 
 /**
@@ -222,6 +239,16 @@ function getStatus() {
 }
 
 async function handleAction(action, params) {
+  // Handle close without reconnecting
+  if (action === 'close') {
+    intentionalDisconnect = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    return await actions.execute(action, params);
+  }
+
   await ensureBrowser();
 
   const sessionInfo = {
@@ -260,10 +287,10 @@ const server = http.createServer(async (req, res) => {
   let exceeded = false;
 
   req.on('data', chunk => {
+    if (exceeded) return;
     body += chunk;
     if (body.length > MAX_BODY_SIZE) {
       exceeded = true;
-      req.destroy();
     }
   });
 
@@ -333,11 +360,14 @@ async function startServer() {
   });
 
   server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
+    if (err.code === 'EADDRINUSE' && currentPort < HTTP_PORT + 10) {
       console.log(`Port ${currentPort} is in use, trying ${currentPort + 1}...`);
       currentPort++;
       server.close();
       startServer();
+    } else if (err.code === 'EADDRINUSE') {
+      console.error(`No available port found (tried ${HTTP_PORT}-${currentPort})`);
+      process.exit(1);
     } else {
       console.error('Server error:', err.message);
       process.exit(1);
@@ -349,6 +379,7 @@ startServer();
 
 async function shutdown() {
   console.log('Shutting down...');
+  intentionalDisconnect = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (browser) browser.disconnect();
   server.close();
