@@ -10,14 +10,12 @@ class PuppeteerActions {
     this.consoleMessages = [];
   }
 
+  /**
+   * Initialize with browser instance.
+   * NOTE: disconnected listener is managed by browser-server.js to avoid stacking.
+   */
   async initialize(browser) {
     this.browser = browser;
-
-    browser.on('disconnected', () => {
-      console.log('Browser disconnected');
-      this.browser = null;
-      this.page = null;
-    });
 
     this.page = await browser.newPage();
     await this.page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
@@ -40,7 +38,20 @@ class PuppeteerActions {
     return this.page;
   }
 
+  /**
+   * Guard: throw if page is not available
+   */
+  ensurePage() {
+    if (!this.page) {
+      throw new Error('No active page - browser may be disconnected');
+    }
+  }
+
   async navigate(params) {
+    if (!params.url || typeof params.url !== 'string') {
+      return { success: false, error: 'Missing or invalid url parameter' };
+    }
+    this.ensurePage();
     const start = Date.now();
     await this.page.goto(params.url, {
       waitUntil: params.waitUntil || 'networkidle2',
@@ -49,38 +60,43 @@ class PuppeteerActions {
     return {
       success: true,
       url: this.page.url(),
-      title: await this.page.title(),
+      title: await this.page.title().catch(() => null),
       loadTime: Date.now() - start
     };
   }
 
   async back() {
+    this.ensurePage();
     await this.page.goBack({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
   async forward() {
+    this.ensurePage();
     await this.page.goForward({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
   async reload() {
+    this.ensurePage();
     await this.page.reload({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
   async snapshot() {
+    this.ensurePage();
     const content = await this.page.evaluate(() => document.body.innerText);
     return {
       success: true,
       content,
       url: this.page.url(),
-      title: await this.page.title(),
+      title: await this.page.title().catch(() => null),
       length: content.length
     };
   }
 
   async html() {
+    this.ensurePage();
     return {
       success: true,
       html: await this.page.content(),
@@ -89,6 +105,7 @@ class PuppeteerActions {
   }
 
   async elements(params) {
+    this.ensurePage();
     const elements = await this.page.evaluate((limit) => {
       const selectors = 'a, button, input, select, textarea, [role="button"], [onclick]';
       return [...document.querySelectorAll(selectors)]
@@ -111,6 +128,7 @@ class PuppeteerActions {
   }
 
   async click(params) {
+    this.ensurePage();
     if (params.text) {
       const clicked = await this.page.evaluate((text) => {
         const selectors = 'a, button, [role="button"], input[type="submit"], input[type="button"]';
@@ -134,6 +152,7 @@ class PuppeteerActions {
   }
 
   async type(params) {
+    this.ensurePage();
     if (!params.selector) {
       return { success: false, error: 'Need selector' };
     }
@@ -155,6 +174,7 @@ class PuppeteerActions {
   }
 
   async scroll(params) {
+    this.ensurePage();
     if (params.selector) {
       await this.page.evaluate(sel => {
         document.querySelector(sel)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -173,6 +193,7 @@ class PuppeteerActions {
   }
 
   async wait(params) {
+    this.ensurePage();
     if (params.selector) {
       await this.page.waitForSelector(params.selector, { timeout: params.timeout || 30000 });
     } else if (params.text) {
@@ -189,6 +210,7 @@ class PuppeteerActions {
   }
 
   async screenshot(params) {
+    this.ensurePage();
     const path = params.path || '/tmp/screenshot.png';
     await this.page.screenshot({
       path,
@@ -200,7 +222,12 @@ class PuppeteerActions {
   }
 
   async evaluate(params) {
-    const result = await this.page.evaluate(params.script);
+    this.ensurePage();
+    if (!params.script || typeof params.script !== 'string') {
+      return { success: false, error: 'Missing or invalid script parameter' };
+    }
+    // Wrap string as function body so both expressions and statements work
+    const result = await this.page.evaluate(new Function('return (' + params.script + ')'));
     return { success: true, result };
   }
 
@@ -240,6 +267,9 @@ class PuppeteerActions {
   }
 
   async newPage() {
+    if (!this.browser) {
+      throw new Error('No browser connected');
+    }
     const newPage = await this.browser.newPage();
     await newPage.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
     this.page = newPage;
@@ -254,12 +284,12 @@ class PuppeteerActions {
 
   async close() {
     if (this.browser) {
-      await this.browser.close();
+      this.browser.disconnect();
       this.browser = null;
       this.page = null;
     }
 
-    return { success: true, message: 'Browser closed' };
+    return { success: true, message: 'Browser disconnected' };
   }
 
   async execute(action, params, sessionInfo = {}) {

@@ -11,7 +11,7 @@ const puppeteer = require('puppeteer-core');
 const PuppeteerActions = require('./puppeteer-actions');
 
 const DONE24BOT_SERVER = process.env.DONE24BOT_SERVER || '';
-const HTTP_PORT = process.env.HTTP_PORT || 9222;
+const HTTP_PORT = parseInt(process.env.HTTP_PORT, 10) || 9222;
 const DONE24BOT_API_KEY = process.env.DONE24BOT_API_KEY || '';
 
 // Mutable - can be set via env or auto-discovered
@@ -21,6 +21,8 @@ let apiKey = DONE24BOT_API_KEY;
 let BROWSER_WS_ENDPOINT = '';
 let browser = null;
 let reconnectTimer = null;
+let reconnectDelay = 5000;
+const RECONNECT_MAX_DELAY = 60000;
 let config = null;
 
 const actions = new PuppeteerActions();
@@ -133,7 +135,6 @@ function buildBrowserWSEndpoint() {
 
 /**
  * Connect Puppeteer directly to done24bot via authenticated WebSocket
- * This is the same approach as the working puppeteer-connect.js example
  */
 async function connectBrowser() {
   const browserWSEndpoint = buildBrowserWSEndpoint();
@@ -145,7 +146,8 @@ async function connectBrowser() {
     protocolTimeout: 30000,
   });
 
-  // Track disconnection for auto-reconnect
+  // Single disconnected handler - only on the server side
+  // (puppeteer-actions.js no longer registers its own)
   browser.on('disconnected', () => {
     console.log('Browser disconnected');
     browser = null;
@@ -159,17 +161,19 @@ async function connectBrowser() {
   const version = await browser.version();
   console.log(`Connected - browser version: ${version}`);
 
+  // Reset backoff on successful connection
+  reconnectDelay = 5000;
+
   return browser;
 }
 
 /**
- * Schedule automatic reconnection after disconnect
+ * Schedule automatic reconnection with exponential backoff
  */
 function scheduleReconnect() {
   if (reconnectTimer) return;
 
-  const delay = 5000;
-  console.log(`Reconnecting in ${delay / 1000}s...`);
+  console.log(`Reconnecting in ${reconnectDelay / 1000}s...`);
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
@@ -178,9 +182,11 @@ function scheduleReconnect() {
       console.log('Reconnected successfully');
     } catch (err) {
       console.error('Reconnect failed:', err.message);
+      // Exponential backoff: double delay up to max
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_DELAY);
       scheduleReconnect();
     }
-  }, delay);
+  }, reconnectDelay);
 }
 
 /**
@@ -196,6 +202,23 @@ async function ensureBrowser() {
   }
 
   return { browser, page: actions.page };
+}
+
+/**
+ * Get current status without triggering reconnect
+ */
+function getStatus() {
+  return {
+    success: true,
+    connected: browser?.isConnected() || false,
+    wsConnected: browser?.isConnected() || false,
+    sessionId: addonSessionId || null,
+    puppeteerRunning: browser?.isConnected() || false,
+    url: actions.page?.url() || null,
+    title: null, // skip async title call for status
+    server: DONE24BOT_SERVER,
+    wsEndpoint: BROWSER_WS_ENDPOINT,
+  };
 }
 
 async function handleAction(action, params) {
@@ -215,18 +238,15 @@ async function handleAction(action, params) {
   return await actions.execute(action, params, sessionInfo);
 }
 
+const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
+  // GET status - no reconnect, just report current state
   if (req.method === 'GET') {
-    try {
-      const status = await handleAction('status', {});
-      res.writeHead(200);
-      res.end(JSON.stringify({ status: 'ok', ...status }));
-    } catch (err) {
-      res.writeHead(500);
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
+    res.writeHead(200);
+    res.end(JSON.stringify({ status: 'ok', ...getStatus() }));
     return;
   }
 
@@ -237,8 +257,23 @@ const server = http.createServer(async (req, res) => {
   }
 
   let body = '';
-  req.on('data', chunk => body += chunk);
+  let exceeded = false;
+
+  req.on('data', chunk => {
+    body += chunk;
+    if (body.length > MAX_BODY_SIZE) {
+      exceeded = true;
+      req.destroy();
+    }
+  });
+
   req.on('end', async () => {
+    if (exceeded) {
+      res.writeHead(413);
+      res.end(JSON.stringify({ success: false, error: 'Request body too large' }));
+      return;
+    }
+
     let action = '(unknown)';
     try {
       const parsed = JSON.parse(body || '{}');
