@@ -11,7 +11,7 @@ const puppeteer = require('puppeteer-core');
 const PuppeteerActions = require('./puppeteer-actions');
 
 const DONE24BOT_SERVER = process.env.DONE24BOT_SERVER || '';
-const HTTP_PORT = process.env.HTTP_PORT || 9222;
+const HTTP_PORT = parseInt(process.env.HTTP_PORT, 10) || 9222;
 const DONE24BOT_API_KEY = process.env.DONE24BOT_API_KEY || '';
 
 // Mutable - can be set via env or auto-discovered
@@ -21,7 +21,11 @@ let apiKey = DONE24BOT_API_KEY;
 let BROWSER_WS_ENDPOINT = '';
 let browser = null;
 let reconnectTimer = null;
+let reconnectDelay = 5000;
+const RECONNECT_MAX_DELAY = 60000;
 let config = null;
+let connectingPromise = null;
+let intentionalDisconnect = false;
 
 const actions = new PuppeteerActions();
 
@@ -31,7 +35,7 @@ const actions = new PuppeteerActions();
 async function loadConfig() {
   if (!DONE24BOT_SERVER) {
     console.error('DONE24BOT_SERVER not set');
-    console.error('   Set it: export DONE24BOT_SERVER="http://local.done24bot.com:4200"');
+    console.error('   Set it: export DONE24BOT_SERVER="https://done24bot.com"');
     process.exit(1);
   }
 
@@ -40,7 +44,7 @@ async function loadConfig() {
   try {
     console.log(`Fetching configuration from ${configUrl}...`);
 
-    const response = await fetch(configUrl);
+    const response = await fetch(configUrl, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     config = await response.json();
 
@@ -104,8 +108,11 @@ async function discoverAddonSession() {
     headers: { 'Content-Type': 'application/json', 'x-api-key': graphqlKey },
     body: JSON.stringify({
       query: `query { listSessions(filter: { isActive: { eq: true }, id: { beginsWith: "addon-" } }) { items { id } } }`
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
+
+  if (!response.ok) throw new Error(`GraphQL API returned HTTP ${response.status}`);
 
   const gqlData = await response.json();
   const sessions = gqlData.data?.listSessions?.items || [];
@@ -132,44 +139,58 @@ function buildBrowserWSEndpoint() {
 }
 
 /**
- * Connect Puppeteer directly to done24bot via authenticated WebSocket
- * This is the same approach as the working puppeteer-connect.js example
+ * Connect Puppeteer directly to done24bot via authenticated WebSocket.
+ * Uses connectingPromise to prevent concurrent connection attempts.
  */
 async function connectBrowser() {
-  const browserWSEndpoint = buildBrowserWSEndpoint();
-  const maskedUrl = browserWSEndpoint.replace(/=(addon-[^&]+|[^&]{6,})/, '=***');
-  console.log(`Connecting Puppeteer to: ${maskedUrl}`);
+  if (connectingPromise) return connectingPromise;
 
-  browser = await puppeteer.connect({
-    browserWSEndpoint,
-    protocolTimeout: 30000,
-  });
+  connectingPromise = (async () => {
+    const browserWSEndpoint = buildBrowserWSEndpoint();
+    const maskedUrl = browserWSEndpoint.replace(/=(addon-[^&]+|[^&]{6,})/, '=***');
+    console.log(`Connecting Puppeteer to: ${maskedUrl}`);
 
-  // Track disconnection for auto-reconnect
-  browser.on('disconnected', () => {
-    console.log('Browser disconnected');
-    browser = null;
-    actions.browser = null;
-    actions.page = null;
-    scheduleReconnect();
-  });
+    intentionalDisconnect = false;
 
-  await actions.initialize(browser);
+    browser = await puppeteer.connect({
+      browserWSEndpoint,
+      protocolTimeout: 30000,
+    });
 
-  const version = await browser.version();
-  console.log(`Connected - browser version: ${version}`);
+    browser.on('disconnected', () => {
+      console.log('Browser disconnected');
+      browser = null;
+      actions.browser = null;
+      actions.page = null;
+      if (!intentionalDisconnect) {
+        scheduleReconnect();
+      }
+    });
 
-  return browser;
+    await actions.initialize(browser);
+
+    const version = await browser.version();
+    console.log(`Connected - browser version: ${version}`);
+
+    reconnectDelay = 5000;
+
+    return browser;
+  })();
+
+  try {
+    return await connectingPromise;
+  } finally {
+    connectingPromise = null;
+  }
 }
 
 /**
- * Schedule automatic reconnection after disconnect
+ * Schedule automatic reconnection with exponential backoff
  */
 function scheduleReconnect() {
   if (reconnectTimer) return;
 
-  const delay = 5000;
-  console.log(`Reconnecting in ${delay / 1000}s...`);
+  console.log(`Reconnecting in ${reconnectDelay / 1000}s...`);
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
@@ -178,9 +199,11 @@ function scheduleReconnect() {
       console.log('Reconnected successfully');
     } catch (err) {
       console.error('Reconnect failed:', err.message);
+      // Exponential backoff: double delay up to max
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_DELAY);
       scheduleReconnect();
     }
-  }, delay);
+  }, reconnectDelay);
 }
 
 /**
@@ -198,7 +221,34 @@ async function ensureBrowser() {
   return { browser, page: actions.page };
 }
 
+/**
+ * Get current status without triggering reconnect
+ */
+function getStatus() {
+  return {
+    success: true,
+    connected: browser?.isConnected() || false,
+    wsConnected: browser?.isConnected() || false,
+    sessionId: addonSessionId || null,
+    puppeteerRunning: browser?.isConnected() || false,
+    url: actions.page?.url() || null,
+    title: null, // skip async title call for status
+    server: DONE24BOT_SERVER,
+    wsEndpoint: BROWSER_WS_ENDPOINT,
+  };
+}
+
 async function handleAction(action, params) {
+  // Handle close without reconnecting
+  if (action === 'close') {
+    intentionalDisconnect = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    return await actions.execute(action, params);
+  }
+
   await ensureBrowser();
 
   const sessionInfo = {
@@ -215,18 +265,15 @@ async function handleAction(action, params) {
   return await actions.execute(action, params, sessionInfo);
 }
 
+const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
+  // GET status - no reconnect, just report current state
   if (req.method === 'GET') {
-    try {
-      const status = await handleAction('status', {});
-      res.writeHead(200);
-      res.end(JSON.stringify({ status: 'ok', ...status }));
-    } catch (err) {
-      res.writeHead(500);
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
+    res.writeHead(200);
+    res.end(JSON.stringify({ status: 'ok', ...getStatus() }));
     return;
   }
 
@@ -237,8 +284,23 @@ const server = http.createServer(async (req, res) => {
   }
 
   let body = '';
-  req.on('data', chunk => body += chunk);
+  let exceeded = false;
+
+  req.on('data', chunk => {
+    if (exceeded) return;
+    body += chunk;
+    if (body.length > MAX_BODY_SIZE) {
+      exceeded = true;
+    }
+  });
+
   req.on('end', async () => {
+    if (exceeded) {
+      res.writeHead(413);
+      res.end(JSON.stringify({ success: false, error: 'Request body too large' }));
+      return;
+    }
+
     let action = '(unknown)';
     try {
       const parsed = JSON.parse(body || '{}');
@@ -298,11 +360,14 @@ async function startServer() {
   });
 
   server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
+    if (err.code === 'EADDRINUSE' && currentPort < HTTP_PORT + 10) {
       console.log(`Port ${currentPort} is in use, trying ${currentPort + 1}...`);
       currentPort++;
       server.close();
       startServer();
+    } else if (err.code === 'EADDRINUSE') {
+      console.error(`No available port found (tried ${HTTP_PORT}-${currentPort})`);
+      process.exit(1);
     } else {
       console.error('Server error:', err.message);
       process.exit(1);
@@ -314,6 +379,7 @@ startServer();
 
 async function shutdown() {
   console.log('Shutting down...');
+  intentionalDisconnect = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (browser) browser.disconnect();
   server.close();

@@ -18,7 +18,7 @@ Remote browser automation skill for [OpenClaw](https://docs.openclaw.ai). Connec
 ```bash
 npm install
 
-export DONE24BOT_SERVER="http://local.done24bot.com:4200"
+export DONE24BOT_SERVER="https://done24bot.com"
 export ADDON_SESSION_ID="addon-xxx"  # optional, auto-discovered if omitted
 npm start
 ```
@@ -47,7 +47,7 @@ Configure in `~/.openclaw/openclaw.json`:
     "entries": {
       "done24bot": {
         "env": {
-          "DONE24BOT_SERVER": "http://local.done24bot.com:4200"
+          "DONE24BOT_SERVER": "https://done24bot.com"
         }
       }
     }

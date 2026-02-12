@@ -24,7 +24,7 @@ Set environment variables or configure in `~/.openclaw/openclaw.json`:
     "entries": {
       "done24bot": {
         "env": {
-          "DONE24BOT_SERVER": "http://local.done24bot.com:4200",
+          "DONE24BOT_SERVER": "https://done24bot.com",
           "ADDON_SESSION_ID": "addon-xxx"
         }
       }
