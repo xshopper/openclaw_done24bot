@@ -1,6 +1,6 @@
 /**
  * Puppeteer Actions Module
- * Wrapper functions for browser automation using Puppeteer API
+ * Browser automation wrapper using puppeteer-core
  */
 
 class PuppeteerActions {
@@ -10,58 +10,36 @@ class PuppeteerActions {
     this.consoleMessages = [];
   }
 
-  /**
-   * Initialize browser and page with console message tracking
-   */
   async initialize(browser) {
     this.browser = browser;
 
-    // Listen for browser disconnection
     browser.on('disconnected', () => {
-      console.log('\n⚠️  Browser disconnected from DevTools');
-      console.log('   Timestamp:', new Date().toISOString());
-      console.log('   Browser target:', browser.target()?.url() || '(unknown)');
-      console.log('   → Browser instance is no longer usable\n');
+      console.log('Browser disconnected');
       this.browser = null;
       this.page = null;
-    });
-
-    // Listen for target crashed events
-    browser.on('targetdestroyed', (target) => {
-      console.log('⚠️  Browser target destroyed:', target.url());
     });
 
     this.page = await browser.newPage();
     await this.page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
 
-    // Track console messages
     this.page.on('console', msg => {
       this.consoleMessages.push({
         type: msg.type(),
         text: msg.text(),
         ts: Date.now()
       });
-      // Keep only last 100 messages
       if (this.consoleMessages.length > 100) {
         this.consoleMessages.shift();
       }
     });
 
-    // Listen for page errors
-    this.page.on('error', (err) => {
-      console.error('⚠️  Page error:', err.message);
-    });
-
     this.page.on('pageerror', (err) => {
-      console.error('⚠️  Page JavaScript error:', err.message);
+      console.error('Page error:', err.message);
     });
 
     return this.page;
   }
 
-  /**
-   * Navigation: Navigate to URL
-   */
   async navigate(params) {
     const start = Date.now();
     await this.page.goto(params.url, {
@@ -76,33 +54,21 @@ class PuppeteerActions {
     };
   }
 
-  /**
-   * Navigation: Go back
-   */
   async back() {
     await this.page.goBack({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
-  /**
-   * Navigation: Go forward
-   */
   async forward() {
     await this.page.goForward({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
-  /**
-   * Navigation: Reload page
-   */
   async reload() {
     await this.page.reload({ waitUntil: 'networkidle2' });
     return { success: true, url: this.page.url() };
   }
 
-  /**
-   * Content: Get page text content
-   */
   async snapshot() {
     const content = await this.page.evaluate(() => document.body.innerText);
     return {
@@ -114,9 +80,6 @@ class PuppeteerActions {
     };
   }
 
-  /**
-   * Content: Get page HTML
-   */
   async html() {
     return {
       success: true,
@@ -125,14 +88,11 @@ class PuppeteerActions {
     };
   }
 
-  /**
-   * Content: List interactive elements
-   */
   async elements(params) {
     const elements = await this.page.evaluate((limit) => {
       const selectors = 'a, button, input, select, textarea, [role="button"], [onclick]';
       return [...document.querySelectorAll(selectors)]
-        .filter(el => el.offsetParent !== null) // visible only
+        .filter(el => el.offsetParent !== null)
         .slice(0, limit || 30)
         .map(el => ({
           tag: el.tagName.toLowerCase(),
@@ -150,9 +110,6 @@ class PuppeteerActions {
     return { success: true, count: elements.length, elements };
   }
 
-  /**
-   * Interaction: Click element by text or selector
-   */
   async click(params) {
     if (params.text) {
       const clicked = await this.page.evaluate((text) => {
@@ -160,18 +117,12 @@ class PuppeteerActions {
         const el = [...document.querySelectorAll(selectors)]
           .find(e => e.textContent?.toLowerCase().includes(text.toLowerCase()) ||
                      e.value?.toLowerCase().includes(text.toLowerCase()));
-        if (el) {
-          el.click();
-          return true;
-        }
+        if (el) { el.click(); return true; }
         return false;
       }, params.text);
 
       if (!clicked) {
-        return {
-          success: false,
-          error: `No clickable element with text: ${params.text}`
-        };
+        return { success: false, error: `No clickable element with text: ${params.text}` };
       }
     } else if (params.selector) {
       await this.page.click(params.selector);
@@ -182,9 +133,6 @@ class PuppeteerActions {
     return { success: true };
   }
 
-  /**
-   * Interaction: Type text into input
-   */
   async type(params) {
     if (!params.selector) {
       return { success: false, error: 'Need selector' };
@@ -206,16 +154,10 @@ class PuppeteerActions {
     return { success: true };
   }
 
-  /**
-   * Interaction: Scroll page
-   */
   async scroll(params) {
     if (params.selector) {
       await this.page.evaluate(sel => {
-        document.querySelector(sel)?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
-        });
+        document.querySelector(sel)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, params.selector);
     } else if (params.direction === 'up') {
       await this.page.evaluate(() => window.scrollBy(0, -500));
@@ -230,14 +172,9 @@ class PuppeteerActions {
     return { success: true };
   }
 
-  /**
-   * Interaction: Wait for element, text, or time
-   */
   async wait(params) {
     if (params.selector) {
-      await this.page.waitForSelector(params.selector, {
-        timeout: params.timeout || 30000
-      });
+      await this.page.waitForSelector(params.selector, { timeout: params.timeout || 30000 });
     } else if (params.text) {
       await this.page.waitForFunction(
         text => document.body.innerText.includes(text),
@@ -251,9 +188,6 @@ class PuppeteerActions {
     return { success: true };
   }
 
-  /**
-   * Media: Take screenshot
-   */
   async screenshot(params) {
     const path = params.path || '/tmp/screenshot.png';
     await this.page.screenshot({
@@ -265,17 +199,11 @@ class PuppeteerActions {
     return { success: true, path };
   }
 
-  /**
-   * Advanced: Execute JavaScript
-   */
   async evaluate(params) {
     const result = await this.page.evaluate(params.script);
     return { success: true, result };
   }
 
-  /**
-   * Advanced: Get console messages
-   */
   async console(params) {
     const level = params.level;
     const messages = level
@@ -285,36 +213,24 @@ class PuppeteerActions {
     return { success: true, messages };
   }
 
-  /**
-   * Browser: Get current status
-   */
   async status(sessionInfo) {
-    const target = this.browser?.target();
     return {
       success: true,
       wsConnected: sessionInfo.connected,
       sessionId: sessionInfo.sessionId,
       puppeteerRunning: this.browser?.isConnected() || false,
       url: this.page?.url() || null,
-      title: this.page ? await this.page.title().catch(() => null) : null,
-      puppeteerSessionId: target?.sessionId() || null,
-      browserId: target?.browserId() || null
+      title: this.page ? await this.page.title().catch(() => null) : null
     };
   }
 
-  /**
-   * Browser: Get detailed session info
-   */
   async sessionInfo(sessionInfo) {
-    const target = this.browser?.target();
     return {
       success: true,
       connected: sessionInfo.connected,
       wsConnected: sessionInfo.wsConnected,
       sessionId: sessionInfo.sessionId,
       puppeteerConnected: this.browser?.isConnected() || false,
-      puppeteerSessionId: target?.sessionId() || null,
-      browserId: target?.browserId() || null,
       server: sessionInfo.server,
       wsEndpoint: sessionInfo.wsEndpoint,
       hasApiKey: sessionInfo.hasApiKey,
@@ -323,32 +239,19 @@ class PuppeteerActions {
     };
   }
 
-  /**
-   * Browser: Create new page/tab
-   */
   async newPage() {
     const newPage = await this.browser.newPage();
     await newPage.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
-    this.page = newPage; // Switch to new page as current
+    this.page = newPage;
 
-    // Setup console tracking for new page
     this.page.on('console', msg => {
-      this.consoleMessages.push({
-        type: msg.type(),
-        text: msg.text(),
-        ts: Date.now()
-      });
-      if (this.consoleMessages.length > 100) {
-        this.consoleMessages.shift();
-      }
+      this.consoleMessages.push({ type: msg.type(), text: msg.text(), ts: Date.now() });
+      if (this.consoleMessages.length > 100) this.consoleMessages.shift();
     });
 
     return { success: true, message: 'New page/tab created' };
   }
 
-  /**
-   * Browser: Close browser
-   */
   async close() {
     if (this.browser) {
       await this.browser.close();
@@ -359,11 +262,7 @@ class PuppeteerActions {
     return { success: true, message: 'Browser closed' };
   }
 
-  /**
-   * Execute action by name
-   */
   async execute(action, params, sessionInfo = {}) {
-    // Map action names to methods
     const actionMap = {
       navigate: () => this.navigate(params),
       back: () => this.back(),

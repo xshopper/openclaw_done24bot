@@ -1,277 +1,148 @@
 ---
 name: done24bot
-description: Remote browser automation client for done24bot service. Connect to your done24bot server, auto-fetch WebSocket config from amplify_outputs.json, and automate web interactions via HTTP API. Supports flexible authentication via DONE24BOT_API_KEY or ADDON_SESSION_ID. Use for web scraping, form filling, UI testing, screenshots, and JavaScript evaluation. Required: DONE24BOT_SERVER + (DONE24BOT_API_KEY or ADDON_SESSION_ID).
+description: Remote browser automation via done24bot service. Connect to a running done24bot server, control a real browser through WebSocket/CDP. Navigate pages, click elements, type text, take screenshots, extract content, and run JavaScript. Auto-discovers addon sessions from done24bot_outputs.json.
 ---
 
-# done24bot - Browser Automation Client
+# done24bot Browser Automation Skill
 
-Control a remote done24bot service via HTTP API. Automatic configuration from amplify_outputs.json.
+Control a remote browser via HTTP API. Connects to your done24bot service over WebSocket using config from `done24bot_outputs.json`.
 
-## Quick Start (30 seconds)
-
-### 1. Install Dependencies
+## Setup
 
 ```bash
-cd ~/.openclaw/workspace/skills/done24bot
-
-PUPPETEER_SKIP_DOWNLOAD=true npm install
-```
-
-### 2. Set Server URL and Authentication
-
-**Option A: Using ADDON_SESSION_ID (recommended)**
-```bash
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua"
-```
-
-**Option B: Using DONE24BOT_API_KEY**
-```bash
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export DONE24BOT_API_KEY="addon-1770732525816-wqcmdh1ua"
-```
-
-### 3. Start the Client
-
-```bash
-npm start
-```
-
-**Expected output:**
-```
-🌐 Browser server listening on http://127.0.0.1:9222
-
-→ Fetching configuration from http://192.168.50.78:4200/amplify_outputs.json...
-✓ Configuration loaded successfully
-  Server: http://192.168.50.78:4200/
-  WebSocket: ws://192.168.50.78:10223/ws/prod
-  Auth: addonSessionId=***mdh1ua (from ADDON_SESSION_ID env var)
-→ Connecting to done24bot service...
-→ Connecting via WebSocket: ws://192.168.50.78:10223/ws/prod?addonSessionId=***
-✓ WebSocket connection opened
-✓ Session connected: puppeteer-1770796364472-92ek4f80j
-  Addon Session: addon-1770732525816-wqcmdh1ua
-
-✓ Ready for browser actions on http://127.0.0.1:9222
-```
-
-### 4. Test
-
-In another terminal:
-
-```bash
-# Check status
-curl http://127.0.0.1:9222
-
-# Navigate to website
-curl -X POST http://127.0.0.1:9222 \
-  -H "Content-Type: application/json" \
-  -d '{"action": "navigate", "url": "https://example.com"}'
-
-# Get page content
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "snapshot"}'
+cd {baseDir}
+npm install
 ```
 
 ## Configuration
 
-### Required
+Set environment variables or configure in `~/.openclaw/openclaw.json`:
 
-- **`DONE24BOT_SERVER`** - Base URL of your done24bot server (with trailing slash)
-  ```bash
-  export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-  ```
-
-### Authentication (Choose One)
-
-- **`ADDON_SESSION_ID`** - Addon session ID (recommended, passed as `?addonSessionId=` parameter)
-  ```bash
-  export ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua"
-  ```
-
-- **`DONE24BOT_API_KEY`** - API key (alternative, passed as `?apiKey=` parameter)
-  ```bash
-  export DONE24BOT_API_KEY="addon-1770732525816-wqcmdh1ua"
-  ```
-
-**Note:** Both parameters work with addon session IDs. Use `ADDON_SESSION_ID` for clarity, or `DONE24BOT_API_KEY` for backward compatibility. If both are set, `ADDON_SESSION_ID` takes priority.
-
-### Optional
-
-- **`HTTP_PORT`** - Local HTTP server port (default: `9222`)
-  ```bash
-  export HTTP_PORT=9222
-  ```
-
-## How It Works
-
-```
-1. Client starts
-2. Reads DONE24BOT_SERVER and authentication (ADDON_SESSION_ID or DONE24BOT_API_KEY)
-3. Fetches $DONE24BOT_SERVER/amplify_outputs.json
-4. Extracts WebSocket endpoint from:
-   custom.WEBSOCKET_API.endpoint + "/" + custom.WEBSOCKET_API.stageName
-5. Connects to WebSocket with authentication parameter:
-   - If ADDON_SESSION_ID set: ws://...?addonSessionId=addon-xxxxx
-   - If DONE24BOT_API_KEY set: ws://...?apiKey=addon-xxxxx
-6. Waits for "session-connected" message from server
-7. Tracks session ID and connection state
-8. Listens for HTTP requests on 127.0.0.1:$HTTP_PORT
-9. Proxies browser actions through HTTP → WebSocket
+```json
+{
+  "skills": {
+    "entries": {
+      "done24bot": {
+        "env": {
+          "DONE24BOT_SERVER": "http://local.done24bot.com:4200",
+          "ADDON_SESSION_ID": "addon-xxx"
+        }
+      }
+    }
+  }
+}
 ```
 
-## Supported Actions
-
-### Navigation
-
-- **`navigate`** - Load a URL
-- **`back`** - Go back
-- **`forward`** - Go forward
-- **`reload`** - Reload page
-
-### Content Extraction
-
-- **`snapshot`** - Get page text
-- **`html`** - Get raw HTML
-- **`elements`** - List interactive elements
-
-### Interaction
-
-- **`click`** - Click element
-- **`type`** - Type into input
-- **`scroll`** - Scroll page
-- **`wait`** - Wait for element/text
-
-### Media
-
-- **`screenshot`** - Capture page
-
-### Advanced
-
-- **`evaluate`** - Run JavaScript
-- **`console`** - Get console messages
-- **`status`** - Server status (includes WebSocket connection state and session ID)
-- **`sessionInfo`** - Detailed session information (connection state, session IDs, endpoints)
-- **`close`** - Close browser
-
-## Examples
-
-### Navigate and Extract
-
-```bash
-# Navigate
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "navigate", "url": "https://example.com"}'
-
-# Get content
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "snapshot"}'
-```
-
-### Fill Form
-
-```bash
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "type", "selector": "input[name=email]", "text": "user@example.com"}'
-
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "click", "text": "Submit"}'
-```
-
-### Take Screenshot
-
-```bash
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "screenshot", "path": "/tmp/page.png", "fullPage": true}'
-```
-
-### Check Session Info
-
-```bash
-# Get detailed session information
-curl -X POST http://127.0.0.1:9222 \
-  -d '{"action": "sessionInfo"}'
-
-# Response includes:
-# - connected: WebSocket connection state
-# - sessionId: Session ID from server
-# - wsEndpoint: WebSocket endpoint
-# - addonSessionId: Masked addon session ID
-```
-
-## Environment Variables
+### Environment Variables
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `DONE24BOT_SERVER` | Yes | (none) | Server base URL (with trailing slash) |
-| `ADDON_SESSION_ID` | One required | (none) | Addon session ID (passed as `?addonSessionId=`) |
-| `DONE24BOT_API_KEY` | One required | (none) | Alternative auth (passed as `?apiKey=`) |
-| `HTTP_PORT` | No | `9222` | Local HTTP server port |
+| `DONE24BOT_SERVER` | Yes | - | done24bot server URL |
+| `ADDON_SESSION_ID` | No | auto-discovered | Addon session ID |
+| `DONE24BOT_API_KEY` | No | - | Alternative auth |
+| `HTTP_PORT` | No | `9222` | Local API port |
 
-### Example Configuration
+If neither `ADDON_SESSION_ID` nor `DONE24BOT_API_KEY` is set, the client auto-discovers active addon sessions via GraphQL.
 
-```bash
-# Connect with API Key
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export DONE24BOT_API_KEY="your-api-key-here"
-
-# Connect with SessionId
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua"
-
-# With custom port
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export DONE24BOT_API_KEY="your-api-key-here"
-export HTTP_PORT=9223
-```
-
-### Persistent Configuration (.env.local)
+## Start
 
 ```bash
-# .env.local
-DONE24BOT_SERVER=http://192.168.50.78:4200/
-DONE24BOT_API_KEY=your-api-key-here
-HTTP_PORT=9222
+node {baseDir}/scripts/browser-server.js
 ```
 
-Load and start:
+The server starts on `http://127.0.0.1:9222` and:
+1. Fetches `$DONE24BOT_SERVER/done24bot_outputs.json`
+2. Extracts WebSocket endpoint from `custom.WEBSOCKET_API`
+3. Connects with authentication
+4. Listens for HTTP actions
+
+## Actions
+
+All actions via POST to `http://127.0.0.1:9222` with JSON body:
+
+### Navigation
 
 ```bash
-set -a && source .env.local && set +a
-npm start
+# Navigate to URL
+curl -X POST http://127.0.0.1:9222 -d '{"action":"navigate","url":"https://example.com"}'
+
+# Back / Forward / Reload
+curl -X POST http://127.0.0.1:9222 -d '{"action":"back"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"forward"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"reload"}'
 ```
 
-## Requirements
+### Content
 
-- Node.js 14+
-- Puppeteer (installed via npm, Chromium skipped)
-- Network access to done24bot server
-- amplify_outputs.json available at: `$DONE24BOT_SERVER/amplify_outputs.json`
+```bash
+# Get page text
+curl -X POST http://127.0.0.1:9222 -d '{"action":"snapshot"}'
 
-## Troubleshooting
+# Get raw HTML
+curl -X POST http://127.0.0.1:9222 -d '{"action":"html"}'
 
-**Connection failed?**
+# List interactive elements
+curl -X POST http://127.0.0.1:9222 -d '{"action":"elements"}'
+```
 
-1. Check DONE24BOT_SERVER is set:
-   ```bash
-   echo $DONE24BOT_SERVER
-   ```
+### Interaction
 
-2. Test if server is accessible:
-   ```bash
-   curl $DONE24BOT_SERVER/amplify_outputs.json | jq .
-   ```
+```bash
+# Click by text or selector
+curl -X POST http://127.0.0.1:9222 -d '{"action":"click","text":"Submit"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"click","selector":"#btn"}'
 
-3. Verify JSON structure has `custom.WEBSOCKET_API.endpoint`
+# Type into input
+curl -X POST http://127.0.0.1:9222 -d '{"action":"type","selector":"input[name=email]","text":"user@example.com"}'
 
-See `references/TROUBLESHOOTING.md` for more help.
+# Type with clear and submit
+curl -X POST http://127.0.0.1:9222 -d '{"action":"type","selector":"#search","text":"query","clear":true,"submit":true}'
 
-## See Also
+# Scroll
+curl -X POST http://127.0.0.1:9222 -d '{"action":"scroll","direction":"down"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"scroll","selector":"#footer"}'
 
-- **Usage Guide**: [USAGE.md](USAGE.md) - Complete browser automation examples
-- **Installation**: [INSTALL.md](INSTALL.md) - Installation guide
-- **Scripts**: [scripts/README.md](scripts/README.md) - Scripts documentation
-- **Architecture**: `references/ARCHITECTURE.md`
-- **Examples**: `references/EXAMPLES.md`
-- **Amplify Config**: `references/AMPLIFY_CONFIG.md`
-- **Troubleshooting**: `references/TROUBLESHOOTING.md`
+# Wait for element or text
+curl -X POST http://127.0.0.1:9222 -d '{"action":"wait","selector":".results"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"wait","text":"Loading complete"}'
+```
+
+### Media & Advanced
+
+```bash
+# Screenshot
+curl -X POST http://127.0.0.1:9222 -d '{"action":"screenshot","path":"/tmp/page.png"}'
+
+# Run JavaScript
+curl -X POST http://127.0.0.1:9222 -d '{"action":"evaluate","script":"document.title"}'
+
+# Console messages
+curl -X POST http://127.0.0.1:9222 -d '{"action":"console"}'
+
+# Status / Session info
+curl http://127.0.0.1:9222
+curl -X POST http://127.0.0.1:9222 -d '{"action":"sessionInfo"}'
+```
+
+## Action Reference
+
+| Action | Params | Description |
+|--------|--------|-------------|
+| `navigate` | `url`, `waitUntil?`, `timeout?` | Load URL |
+| `back` | - | Go back |
+| `forward` | - | Go forward |
+| `reload` | - | Reload page |
+| `snapshot` | - | Get page text |
+| `html` | - | Get raw HTML |
+| `elements` | `limit?` | List interactive elements |
+| `click` | `text?` or `selector?` | Click element |
+| `type` | `selector`, `text`, `clear?`, `submit?`, `delay?` | Type into input |
+| `scroll` | `direction?` or `selector?` | Scroll page |
+| `wait` | `selector?`, `text?`, `ms?`, `timeout?` | Wait for condition |
+| `screenshot` | `path?`, `fullPage?` | Take screenshot |
+| `evaluate` | `script` | Run JavaScript |
+| `console` | `level?` | Get console messages |
+| `status` | - | Connection status |
+| `sessionInfo` | - | Session details |
+| `newPage` | - | Open new tab |
+| `close` | - | Close browser |

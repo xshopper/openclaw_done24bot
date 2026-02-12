@@ -1,171 +1,81 @@
-# done24bot Browser Client
+# done24bot - OpenClaw Browser Automation Skill
 
-Remote browser automation client for done24bot service.
+Remote browser automation skill for [OpenClaw](https://docs.openclaw.ai). Connects to a done24bot service via WebSocket and exposes browser control through an HTTP API.
 
-## Architecture
+## How It Works
 
-The browser client is split into two modules for clean separation of concerns:
-
-**Server Layer (`browser-server.js`):**
-- HTTP server for REST API
-- WebSocket connection management
-- Session authentication and tracking
-- Request routing and coordination
-
-**Automation Layer (`puppeteer-actions.js`):**
-- Puppeteer wrapper functions
-- Browser automation actions (CDP)
-- Console message tracking
-- Page lifecycle management
-
-This architecture provides:
-- ✅ Clean separation between server and automation logic
-- ✅ Easier testing and maintenance
-- ✅ Reusable Puppeteer action wrappers
-- ✅ Single responsibility per module
-
-## Main Scripts
-
-### browser-server.js
-Main browser client that connects to done24bot service and provides HTTP API.
-
-**Usage:**
-```bash
-export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-export ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua"
-node scripts/browser-server.js
 ```
-
-Or use npm:
-```bash
-npm start
+1. Fetches done24bot_outputs.json from DONE24BOT_SERVER
+2. Extracts WebSocket endpoint (custom.WEBSOCKET_API)
+3. Auto-discovers addon sessions via GraphQL (or uses provided ID)
+4. Connects via WebSocket with authentication
+5. Wraps Puppeteer over the connection
+6. Serves HTTP API on 127.0.0.1:9222
 ```
-
-**Features:**
-- Auto-fetches configuration from `amplify_outputs.json`
-- Connects to WebSocket with session authentication
-- Provides HTTP API on port 9222 (configurable)
-- Tracks session ID and connection state
-
-### puppeteer-actions.js
-Puppeteer wrapper module providing browser automation functions.
-
-**Exports:**
-- `PuppeteerActions` class with methods for all CDP actions
-- Navigation: `navigate()`, `back()`, `forward()`, `reload()`
-- Content: `snapshot()`, `html()`, `elements()`
-- Interaction: `click()`, `type()`, `scroll()`, `wait()`
-- Media: `screenshot()`
-- Advanced: `evaluate()`, `console()`, `status()`, `sessionInfo()`
-- Browser: `newPage()`, `close()`
-
-**Usage:**
-```javascript
-const PuppeteerActions = require('./puppeteer-actions');
-const actions = new PuppeteerActions();
-await actions.initialize(browser);
-const result = await actions.navigate({ url: 'https://example.com' });
-```
-
-### setup.sh
-Interactive setup script for installing dependencies and testing connection.
-
-**Usage:**
-```bash
-./scripts/setup.sh
-```
-
-## Test Scripts
-
-### test-browser-api.js
-Tests the browser-server.js HTTP API endpoints.
-
-**Prerequisites:**
-- browser-server.js must be running
-
-**Usage:**
-```bash
-# Start browser-server first (in another terminal)
-DONE24BOT_SERVER="http://192.168.50.78:4200/" \
-ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua" \
-npm start
-
-# Then run the test
-node scripts/test-browser-api.js
-```
-
-**Custom port:**
-```bash
-HTTP_PORT=9223 node scripts/test-browser-api.js
-```
-
-**What it tests:**
-1. GET / - Server status endpoint
-2. POST status - Browser status action
-3. POST sessionInfo - Session information action
-
-**Output:**
-```
-Browser Information:
-  Connected: Yes
-  WebSocket: Connected
-  Session ID: puppeteer-1770797279788-dooat1rp4
-  Server: http://192.168.50.78:4200/
-  WebSocket Endpoint: ws://192.168.50.78:10223/ws/prod
-  Addon Session ID: ***mdh1ua
-```
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DONE24BOT_SERVER` | Yes | (none) | Server base URL with trailing slash |
-| `ADDON_SESSION_ID` | One required | (none) | Addon session ID (recommended) |
-| `DONE24BOT_API_KEY` | One required | (none) | Alternative authentication |
-| `HTTP_PORT` | No | 9222 | Local HTTP server port |
 
 ## Quick Start
 
-1. **Install dependencies:**
-   ```bash
-   PUPPETEER_SKIP_DOWNLOAD=true npm install
-   ```
+```bash
+npm install
 
-2. **Start browser-server:**
-   ```bash
-   export DONE24BOT_SERVER="http://192.168.50.78:4200/"
-   export ADDON_SESSION_ID="addon-1770732525816-wqcmdh1ua"
-   npm start
-   ```
+export DONE24BOT_SERVER="http://local.done24bot.com:4200"
+export ADDON_SESSION_ID="addon-xxx"  # optional, auto-discovered if omitted
+npm start
+```
 
-3. **Test the API:**
-   ```bash
-   # In another terminal
-   node scripts/test-browser-api.js
-   ```
+Then in another terminal:
 
-4. **Use the API:**
-   ```bash
-   # Get status
-   curl http://127.0.0.1:9222
+```bash
+curl -X POST http://127.0.0.1:9222 -d '{"action":"navigate","url":"https://example.com"}'
+curl -X POST http://127.0.0.1:9222 -d '{"action":"snapshot"}'
+```
 
-   # Get session info
-   curl -X POST http://127.0.0.1:9222 \
-     -H "Content-Type: application/json" \
-     -d '{"action": "sessionInfo"}'
-   ```
+## OpenClaw Skill Installation
 
-## Troubleshooting
+Copy to your OpenClaw skills directory:
 
-**Connection refused:**
-- Make sure browser-server.js is running
-- Check the port with `HTTP_PORT` environment variable
+```bash
+cp -r . ~/.openclaw/skills/done24bot
+cd ~/.openclaw/skills/done24bot && npm install
+```
 
-**Authentication failed:**
-- Verify `ADDON_SESSION_ID` or `DONE24BOT_API_KEY` is set
-- Check server is accessible: `curl http://192.168.50.78:4200/amplify_outputs.json`
+Configure in `~/.openclaw/openclaw.json`:
 
+```json
+{
+  "skills": {
+    "entries": {
+      "done24bot": {
+        "env": {
+          "DONE24BOT_SERVER": "http://local.done24bot.com:4200"
+        }
+      }
+    }
+  }
+}
+```
 
-See [../INSTALL.md](../INSTALL.md) for full installation guide.
-See [../SKILL.md](../SKILL.md) for complete API documentation.
-See [../USAGE.md](../USAGE.md) for browser automation functionalities.
+## Files
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | OpenClaw skill definition and API reference |
+| `scripts/browser-server.js` | HTTP server + WebSocket client |
+| `scripts/puppeteer-actions.js` | Puppeteer automation wrapper (18 actions) |
+| `scripts/test-browser-api.js` | API test script |
+| `scripts/setup.sh` | Setup helper |
+
+## Environment Variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `DONE24BOT_SERVER` | Yes | - | done24bot server URL |
+| `ADDON_SESSION_ID` | No | auto-discovered | Addon session ID |
+| `DONE24BOT_API_KEY` | No | - | Alternative auth |
+| `HTTP_PORT` | No | `9222` | Local API port |
+
+## Requirements
+
+- Node.js 18+
+- Network access to done24bot server
+- `done24bot_outputs.json` available at server URL

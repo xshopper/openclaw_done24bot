@@ -1,30 +1,27 @@
 {
-  "name": "done24bot",
+  "name": "openclaw_done24bot",
   "version": "1.0.0",
-  "description": "Remote browser automation client for done24bot service",
+  "description": "OpenClaw browser automation skill - connects to done24bot service via WebSocket",
   "main": "scripts/browser-server.js",
   "bin": {
-    "done24bot": "scripts/browser-server.js"
+    "openclaw-done24bot": "scripts/browser-server.js"
   },
   "scripts": {
-    "install": "npm ci",
     "start": "node scripts/browser-server.js",
-    "dev": "BROWSER_PORT=9222 node scripts/browser-server.js"
+    "test": "node scripts/test-browser-api.js"
   },
   "keywords": [
+    "openclaw",
     "done24bot",
     "browser",
     "automation",
     "puppeteer",
-    "remote",
-    "scraping",
-    "testing"
+    "skill"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "puppeteer": "^21.0.0",
-    "ws": "^8.19.0"
+    "puppeteer-core": "^21.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
