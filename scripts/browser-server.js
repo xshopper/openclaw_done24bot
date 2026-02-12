@@ -31,7 +31,7 @@ const actions = new PuppeteerActions();
 async function loadConfig() {
   if (!DONE24BOT_SERVER) {
     console.error('DONE24BOT_SERVER not set');
-    console.error('   Set it: export DONE24BOT_SERVER="http://local.done24bot.com:4200"');
+    console.error('   Set it: export DONE24BOT_SERVER="https://done24bot.com"');
     process.exit(1);
   }
 
