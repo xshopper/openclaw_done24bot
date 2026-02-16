@@ -26,6 +26,8 @@ const RECONNECT_MAX_DELAY = 60000;
 let config = null;
 let connectingPromise = null;
 let intentionalDisconnect = false;
+let healthCheckTimer = null;
+const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
 const actions = new PuppeteerActions();
 
@@ -159,6 +161,10 @@ async function connectBrowser() {
 
     browser.on('disconnected', () => {
       console.log('Browser disconnected');
+      if (healthCheckTimer) {
+        clearInterval(healthCheckTimer);
+        healthCheckTimer = null;
+      }
       browser = null;
       actions.browser = null;
       actions.page = null;
@@ -173,6 +179,7 @@ async function connectBrowser() {
     console.log(`Connected - browser version: ${version}`);
 
     reconnectDelay = 5000;
+    startHealthCheck();
 
     return browser;
   })();
@@ -185,10 +192,55 @@ async function connectBrowser() {
 }
 
 /**
+ * Periodic health check to detect silent connection failures
+ */
+function startHealthCheck() {
+  if (healthCheckTimer) clearInterval(healthCheckTimer);
+
+  healthCheckTimer = setInterval(async () => {
+    if (intentionalDisconnect) return;
+
+    if (!browser || !browser.isConnected()) {
+      console.log('Health check: Browser disconnected, triggering reconnect');
+      if (healthCheckTimer) clearInterval(healthCheckTimer);
+      healthCheckTimer = null;
+      scheduleReconnect();
+      return;
+    }
+
+    // Test if browser is actually responsive
+    try {
+      await browser.version();
+    } catch (err) {
+      console.log('Health check failed:', err.message);
+      if (healthCheckTimer) clearInterval(healthCheckTimer);
+      healthCheckTimer = null;
+      if (browser) {
+        try {
+          browser.disconnect();
+        } catch (e) {
+          // ignore
+        }
+        browser = null;
+        actions.browser = null;
+        actions.page = null;
+      }
+      scheduleReconnect();
+    }
+  }, HEALTH_CHECK_INTERVAL);
+}
+
+/**
  * Schedule automatic reconnection with exponential backoff
  */
 function scheduleReconnect() {
   if (reconnectTimer) return;
+
+  // Stop health checks while reconnecting
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
 
   console.log(`Reconnecting in ${reconnectDelay / 1000}s...`);
 
@@ -355,7 +407,8 @@ async function startServer() {
       console.log(`\nReady for browser actions on http://127.0.0.1:${currentPort}\n`);
     } catch (err) {
       console.error('Initial connection failed:', err.message);
-      console.error('Will retry on first request');
+      console.error('Scheduling automatic reconnection...');
+      scheduleReconnect();
     }
   });
 
@@ -381,6 +434,7 @@ async function shutdown() {
   console.log('Shutting down...');
   intentionalDisconnect = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (healthCheckTimer) clearInterval(healthCheckTimer);
   if (browser) browser.disconnect();
   server.close();
   process.exit(0);
